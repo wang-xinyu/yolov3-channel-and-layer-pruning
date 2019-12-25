@@ -19,31 +19,10 @@ def test(cfg,
          save_json=False,
          model=None):
     
-    # Initialize/load model and set device
-    if model is None:
-        device = torch_utils.select_device(opt.device)
-        verbose = True
-
-        # Initialize model
-        model = Darknet(cfg, img_size).to(device)
-
-        # Load weights
-        attempt_download(weights)
-        if weights.endswith('.pt'):  # pytorch format
-            model.load_state_dict(torch.load(weights, map_location=device)['model'])
-        else:  # darknet format
-            _ = load_darknet_weights(model, weights)
-
-        if torch.cuda.device_count() > 1:
-            model = nn.DataParallel(model)
-    else:
-        device = next(model.parameters()).device  # get model device
-        verbose = False
-
     # Configure run
     data = parse_data_cfg(data)
     nc = int(data['classes'])  # number of classes
-    test_path = data['valid']  # path to test images
+    test_path = "../brainwash-yolo/test.txt"  # path to test images
     names = load_classes(data['names'])  # class names
 
     # Dataloader
@@ -54,31 +33,38 @@ def test(cfg,
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
 
+    output_dict = {}
+    with open("brainwash_test_output.txt", "r") as f:
+        for line in f.readlines():
+            line = line.strip('\n')
+            m = line.split(';')
+            output_dict[m[0]] = []
+            for i in m[1:-1]:
+                if len(i) == 0:
+                    continue
+                p = []
+                for j in i.split(','):
+                    p.append(float(j))
+                output_dict[m[0]].append(p)
+    #print(output_dict)
+
     seen = 0
-    model.eval()
-    coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%10s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1')
     p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0.
-    loss = torch.zeros(3)
     jdict, stats, ap, ap_class = [], [], [], []
     for batch_i, (imgs, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
-        targets = targets.to(device)
-        imgs = imgs.to(device)
+        #targets = targets.to(device)
+        #imgs = imgs.to(device)
         _, _, height, width = imgs.shape  # batch size, channels, height, width
 
-        # Plot images with bounding boxes
-        if batch_i == 0 and not os.path.exists('test_batch0.jpg'):
-            plot_images(imgs=imgs, targets=targets, paths=paths, fname='test_batch0.jpg')
-
         # Run model
-        inf_out, train_out = model(imgs)  # inference and training outputs
-
-        # Compute loss
-        if hasattr(model, 'hyp'):  # if model has loss hyperparameters
-            loss += compute_loss(train_out, targets, model)[1][:3].cpu()  # GIoU, obj, cls
+        #inf_out, train_out = model(imgs)  # inference and training outputs
 
         # Run NMS
-        output = non_max_suppression(inf_out, conf_thres=conf_thres, nms_thres=nms_thres)
+        #output = non_max_suppression(inf_out, conf_thres=conf_thres, nms_thres=nms_thres)
+
+        output = np.array([output_dict[paths[0]]])
+        output = torch.Tensor(output)
 
         # Statistics per image
         for si, pred in enumerate(output):
@@ -87,28 +73,10 @@ def test(cfg,
             tcls = labels[:, 0].tolist() if nl else []  # target class
             seen += 1
 
-            if pred is None:
+            if len(pred) == 0:
                 if nl:
                     stats.append(([], torch.Tensor(), torch.Tensor(), tcls))
                 continue
-
-            # Append to text file
-            # with open('test.txt', 'a') as file:
-            #    [file.write('%11.5g' * 7 % tuple(x) + '\n') for x in pred]
-
-            # Append to pycocotools JSON dictionary
-            if save_json:
-                # [{"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}, ...
-                image_id = int(Path(paths[si]).stem.split('_')[-1])
-                box = pred[:, :4].clone()  # xyxy
-                scale_coords(imgs[si].shape[1:], box, shapes[si])  # to original shape
-                box = xyxy2xywh(box)  # xywh
-                box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-                for di, d in enumerate(pred):
-                    jdict.append({'image_id': image_id,
-                                  'category_id': coco91class[int(d[6])],
-                                  'bbox': [floatn(x, 3) for x in box[di]],
-                                  'score': floatn(d[4], 5)})
 
             # Clip boxes to image bounds
             clip_coords(pred, (height, width))
@@ -160,47 +128,17 @@ def test(cfg,
     pf = '%20s' + '%10.3g' * 6  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1))
 
-    # Print results per class
-    if verbose and nc > 1 and len(stats):
-        for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i]))
-
-    # Save JSON
-    if save_json and map and len(jdict):
-        try:
-            imgIds = [int(Path(x).stem.split('_')[-1]) for x in dataset.img_files]
-            with open('results.json', 'w') as file:
-                json.dump(jdict, file)
-
-            from pycocotools.coco import COCO
-            from pycocotools.cocoeval import COCOeval
-
-            # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-            cocoGt = COCO('../coco/annotations/instances_val2014.json')  # initialize COCO ground truth api
-            cocoDt = cocoGt.loadRes('results.json')  # initialize COCO pred api
-
-            cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
-            cocoEval.params.imgIds = imgIds  # [:32]  # only evaluate these images
-            cocoEval.evaluate()
-            cocoEval.accumulate()
-            cocoEval.summarize()
-            map = cocoEval.stats[1]  # update mAP to pycocotools mAP
-        except:
-            print('WARNING: missing dependency pycocotools from requirements.txt. Can not compute official COCO mAP.')
-
     # Return results
     maps = np.zeros(nc) + map
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    return (mp, mr, map, mf1, *(loss / len(dataloader)).tolist()), maps
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-1cls.cfg', help='cfg file path')
     parser.add_argument('--data', type=str, default='data/brainwash.data', help='coco.data file path')
     parser.add_argument('--weights', type=str, default='weights/last.pt', help='path to weights file')
-    parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.4, help='object confidence threshold')

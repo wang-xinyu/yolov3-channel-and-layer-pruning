@@ -1,0 +1,4 @@
+classes=1
+train=/home/user/fengyaping/YOLOv3-model-pruning/data/train.txt
+valid=/home/user/fengyaping/YOLOv3-model-pruning/data/valid.txt
+names=/home/user/fengyaping/YOLOv3-model-pruning/data/oxfordhand.names

@@ -1,5 +1,7 @@
 import argparse
 from sys import platform
+import struct
+
 
 from models import *  # set ONNX_EXPORT in models.py
 from utils.datasets import *
@@ -9,7 +11,7 @@ from utils.utils import *
 def detect(save_txt=False, save_img=False):
     img_size = (320, 192) if ONNX_EXPORT else opt.img_size  # (320, 192) or (416, 256) or (608, 352) for (height, width)
     out, source, weights, half, view_img = opt.output, opt.source, opt.weights, opt.half, opt.view_img
-    webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
+    #webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
 
     # Initialize
     device = torch_utils.select_device(device='cpu' if ONNX_EXPORT else opt.device)
@@ -34,10 +36,10 @@ def detect(save_txt=False, save_img=False):
     model.to(device).eval()
 
     # Export mode
-    if ONNX_EXPORT:
-        img = torch.zeros((1, 3) + img_size)  # (1, 3, 320, 192)
-        torch.onnx.export(model, img, 'weights/export.onnx', verbose=True)
-        return
+    #if ONNX_EXPORT:
+    #    img = torch.zeros((1, 3) + img_size)  # (1, 3, 320, 192)
+    #    torch.onnx.export(model, img, 'weights/export.onnx', verbose=True)
+    #    return
 
     # Half precision
     half = half and device.type != 'cpu'  # half precision only supported on CUDA
@@ -46,13 +48,13 @@ def detect(save_txt=False, save_img=False):
 
     # Set Dataloader
     vid_path, vid_writer = None, None
-    if webcam:
-        view_img = True
-        torch.backends.cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=img_size, half=half)
-    else:
-        save_img = True
-        dataset = LoadImages(source, img_size=img_size, half=half)
+    #if webcam:
+    #    view_img = True
+    #    torch.backends.cudnn.benchmark = True  # set True to speed up constant image size inference
+    #    dataset = LoadStreams(source, img_size=img_size, half=half)
+    #else:
+    save_img = True
+    dataset = LoadImages(source, img_size=img_size, half=half)
 
     # Get classes and colors
     classes = load_classes(parse_data_cfg(opt.data)['names'])
@@ -68,15 +70,15 @@ def detect(save_txt=False, save_img=False):
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
         pred, _ = model(img)
-
+        print("pred:",pred)
         if opt.half:
             pred = pred.float()
 
         for i, det in enumerate(non_max_suppression(pred, opt.conf_thres, opt.nms_thres)):  # detections per image
-            if webcam:  # batch_size >= 1
-                p, s, im0 = path[i], '%g: ' % i, im0s[i]
-            else:
-                p, s, im0 = path, '', im0s
+            #if webcam:  # batch_size >= 1
+            #    p, s, im0 = path[i], '%g: ' % i, im0s[i]
+            #else:
+            p, s, im0 = path, '', im0s
 
             save_path = str(Path(out) / Path(p).name)
             s += '%gx%g ' % img.shape[2:]  # print string
@@ -90,6 +92,7 @@ def detect(save_txt=False, save_img=False):
                     s += '%g %ss, ' % (n, classes[int(c)])  # add to string
 
                 # Write results
+                '''
                 for *xyxy, conf, _, cls in det:
                     if save_txt:  # Write to file
                         with open(save_path + '.txt', 'a') as file:
@@ -98,7 +101,7 @@ def detect(save_txt=False, save_img=False):
                     if save_img or view_img:  # Add bbox to image
                         label = '%s %.2f' % (classes[int(cls)], conf)
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)])
-
+                '''
             print('%sDone. (%.3fs)' % (s, time.time() - t))
 
             # Stream results
@@ -120,6 +123,17 @@ def detect(save_txt=False, save_img=False):
                         h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                         vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*opt.fourcc), fps, (w, h))
                     vid_writer.write(im0)
+    f = open('pruning-yolov3.wts','w')
+    print("begin write wts*********************")
+    f.write('{}\n'.format(len(model.state_dict().keys())))
+    for k,v in model.state_dict().items():
+        vr = v.reshape(-1).cpu().numpy()
+        f.write('{} {} '.format(k,len(vr)))
+        for vv in vr:
+            f.write(' ')
+            f.write(struct.pack('>f',float(vv)).hex())
+        f.write('\n')
+        print("---------------------------")
 
     if save_txt or save_img:
         print('Results saved to %s' % os.getcwd() + os.sep + out)
@@ -131,9 +145,9 @@ def detect(save_txt=False, save_img=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-spp.cfg', help='cfg file path')
-    parser.add_argument('--data', type=str, default='data/coco.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/yolov3-spp.weights', help='path to weights file')
+    parser.add_argument('--cfg', type=str, default='cfg/prune_0.8_keep_0.01_8_shortcut_yolov3-1cls.cfg', help='cfg file path')
+    parser.add_argument('--data', type=str, default='data/voc2028.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/best.pt', help='path to weights file')
     parser.add_argument('--source', type=str, default='data/samples', help='source')  # input file/folder, 0 for webcam
     parser.add_argument('--output', type=str, default='output', help='output folder')  # output folder
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
@@ -141,7 +155,7 @@ if __name__ == '__main__':
     parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')
     parser.add_argument('--fourcc', type=str, default='mp4v', help='output video codec (verify ffmpeg support)')
     parser.add_argument('--half', action='store_true', help='half precision FP16 inference')
-    parser.add_argument('--device', default='', help='device id (i.e. 0 or 0,1) or cpu')
+    parser.add_argument('--device', default='1', help='device id (i.e. 0 or 0,1) or cpu')
     parser.add_argument('--view-img', action='store_true', help='display results')
     opt = parser.parse_args()
     print(opt)

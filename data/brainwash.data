@@ -1,0 +1,4 @@
+classes=1
+train=/home/user/wangxinyu/brainwash-yolo/train.txt
+valid=/home/user/wangxinyu/brainwash-yolo/test.txt
+names=/home/user/wangxinyu/yolov3-channel-and-layer-pruning-training/data/brainwash.names

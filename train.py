@@ -132,6 +132,7 @@ def train():
             with open(results_file, 'w') as file:
                 file.write(chkpt['training_results'])  # write results.txt
 
+        #chkpt['epoch'] = 0
         start_epoch = chkpt['epoch'] + 1
         del chkpt
 
@@ -286,7 +287,7 @@ def train():
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
         #print('learning rate:',optimizer.param_groups[0]['lr'])
-        print(('\n' + '%10s' * 10) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'soft', 'rratio', 'targets', 'img_size'))
+        print(('\n' + '%10s' * 9) % ('Epoch', 'gpu_mem', 'GIoU', 'obj', 'cls', 'total', 'soft', 'targets', 'img_size'))
 
         # Freeze backbone at epoch 0, unfreeze at epoch 1 (optional)
         freeze_backbone = False
@@ -355,16 +356,13 @@ def train():
                 return results
 
             soft_target = 0
-            reg_ratio = 0  #表示有多少target的回归是不如老师的，这时学生会跟gt再学习
             if t_cfg:
                 if mixed_precision:
                     with torch.no_grad():
                         output_t = t_model(imgs)
                 else:
                     _, output_t = t_model(imgs)
-                #soft_target = distillation_loss1(pred, output_t, model.nc, imgs.size(0))
-                #这里把蒸馏策略改为了二，想换回一的可以注释掉loss2，把loss1取消注释
-                soft_target, reg_ratio = distillation_loss2(model, targets, pred, output_t)
+                soft_target = distillation_loss1(pred, output_t, model.nc, imgs.size(0))
                 loss += soft_target
 
             # Scale loss by nominal batch_size of 64
@@ -388,8 +386,8 @@ def train():
             mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
             msoft_target = (msoft_target * i + soft_target) / (i + 1)
             mem = torch.cuda.memory_cached() / 1E9 if torch.cuda.is_available() else 0  # (GB)
-            s = ('%10s' * 2 + '%10.3g' * 8) % (
-                '%g/%g' % (epoch, epochs - 1), '%.3gG' % mem, *mloss, msoft_target, reg_ratio, len(targets), img_size)
+            s = ('%10s' * 2 + '%10.3g' * 7) % (
+                '%g/%g' % (epoch, epochs - 1), '%.3gG' % mem, *mloss, msoft_target,len(targets), img_size)
             pbar.set_description(s)
 
             # end batch ------------------------------------------------------------------------------------------------
@@ -489,12 +487,12 @@ def prebias():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=273)  # 500200 batches at bs 16, 117263 images = 273 epochs
+    parser.add_argument('--epochs', type=int, default=100)  # 500200 batches at bs 16, 117263 images = 273 epochs
     parser.add_argument('--batch-size', type=int, default=16)  # effective bs = batch_size * accumulate = 16 * 4 = 64
     parser.add_argument('--accumulate', type=int, default=2, help='batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-spp.cfg', help='cfg file path')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-1cls.cfg', help='cfg file path')
     parser.add_argument('--t_cfg', type=str, default='', help='teacher model cfg file path for knowledge distillation')
-    parser.add_argument('--data', type=str, default='data/coco.data', help='*.data file path')
+    parser.add_argument('--data', type=str, default='data/brainwash.data', help='*.data file path')
     parser.add_argument('--multi-scale', action='store_true', help='adjust (67% - 150%) img_size every 10 batches')
     parser.add_argument('--img_size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
@@ -511,7 +509,7 @@ if __name__ == '__main__':
     parser.add_argument('--arc', type=str, default='defaultpw', help='yolo architecture')  # defaultpw, uCE, uBCE
     parser.add_argument('--prebias', action='store_true', help='transfer-learn yolo biases prior to training')
     parser.add_argument('--name', default='', help='renames results.txt to results_name.txt if supplied')
-    parser.add_argument('--device', default='', help='device id (i.e. 0 or 0,1) or cpu')
+    parser.add_argument('--device', default='1', help='device id (i.e. 0 or 0,1) or cpu')
     parser.add_argument('--adam', action='store_true', help='use adam optimizer')
     parser.add_argument('--var', type=float, help='debug variable')
     parser.add_argument('--sparsity-regularization', '-sr', dest='sr', action='store_true',

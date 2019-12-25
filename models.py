@@ -342,7 +342,6 @@ def load_darknet_weights(self, weights, cutoff=-1):
                 ptr += num_w
             else:
                 if os.path.basename(file) == 'yolov3.weights' or os.path.basename(file) == 'yolov3-tiny.weights' or os.path.basename(file) == 'yolov3-spp.weights':
-                    #加载权重'yolov3.weights' 或者 'yolov3-tiny-weights.' 是为了更好初始化自己模型权重，要避免同名
                     num_b = 255
                     ptr += num_b
                     num_w = int(self.module_defs[i-1]["filters"]) * 255
